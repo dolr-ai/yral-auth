@@ -1,7 +1,7 @@
 use std::{env, time::Duration};
 
 use jsonwebtoken::Header;
-use yral_auth_v2::{oauth::jwt::ClientSecretClaims, utils::time::current_epoch};
+use yral_auth::{oauth::jwt::ClientSecretClaims, utils::time::current_epoch};
 
 // 1 year
 const JWT_EXPIRY: Duration = Duration::from_secs(365 * 24 * 60 * 60);

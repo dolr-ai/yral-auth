@@ -17,7 +17,7 @@ use tower_governor::{
 };
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use yral_auth_v2::{
+use yral_auth::{
     api::oauth_server_impl::handle_apple_oauth_form_post,
     api::server_impl::{
         handle_oauth_token_grant, handle_oidc_configuration, handle_well_known_jwks, healthz,
@@ -90,7 +90,8 @@ async fn main() {
                 .unwrap_or(0.5),
             send_default_pii: false, // Keep false, manually add safe data
             attach_stacktrace: true,
-            before_send: Some(yral_auth_v2::middleware::sentry_scrub::create_before_send()),
+            before_send: Some(yral_auth::middleware::sentry_scrub::create_before_send()),
+            before_send: Some(yral_auth::middleware::sentry_scrub::create_before_send()),
             ..Default::default()
         },
     ));
@@ -139,7 +140,8 @@ async fn main() {
         .with_state(app_state)
         .merge(server_routes(ctx))
         .layer(axum::middleware::from_fn(
-            yral_auth_v2::middleware::http_logging_middleware,
+            yral_auth::middleware::http_logging_middleware,
+            yral_auth::middleware::http_logging_middleware,
         )) // HTTP logging before Sentry
         .layer(sentry_tower_layer);
 
