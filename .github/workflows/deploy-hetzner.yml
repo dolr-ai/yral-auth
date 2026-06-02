@@ -89,19 +89,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup SSH key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.HETZNER_BARE_METAL_GITHUB_ACTIONS_SSH_PRIVATE_KEY }}
-
-      - name: Add server to known hosts
-        run: |
-          ssh-keyscan -H ${{ matrix.host }} >> ~/.ssh/known_hosts
-
-      - name: Check server connectivity
-        run: |
-          ssh -o ConnectTimeout=10 root@${{ matrix.host }} "echo 'Server connection successful'"
-      
       - name: Import Secrets from Vault
         uses: hashicorp/vault-action@v3
         with:
@@ -121,16 +108,30 @@ jobs:
             secret/data/yral-auth/DRAGONFLY_REDIS_STORE_CLIENT_KEY value | DRAGONFLY_REDIS_STORE_CLIENT_KEY ;
             secret/data/yral-auth/DRAGONFLY_REDIS_STORE_HOSTS value | DRAGONFLY_REDIS_STORE_HOSTS ;
             secret/data/yral-auth/DRAGONFLY_REDIS_STORE_PASSWORD value | DRAGONFLY_REDIS_STORE_PASSWORD ;
+            secret/data/yral-auth/AUTH_MACHINES_ACCESS_KEY value | AUTH_MACHINES_ACCESS_KEY ;
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ env.AUTH_MACHINES_ACCESS_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ matrix.host }} >> ~/.ssh/known_hosts
+
+      - name: Check server connectivity
+        run: |
+          ssh -o ConnectTimeout=10 yral-auth-manager@${{ matrix.host }} "echo 'Server connection successful'"
 
       - name: Sync deployment files to server
         run: |
           rsync -avz --delete \
             ./deploy/ \
-            root@${{ matrix.host }}:/home/yral-auth/
+            yral-auth-manager@${{ matrix.host }}:/home/yral-auth/
 
       - name: Log in to GitHub Container Registry on server
         run: |
-          ssh root@${{ matrix.host }} "
+          ssh yral-auth-manager@${{ matrix.host }} "
             echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           "
 
@@ -148,7 +149,7 @@ jobs:
           DRAGONFLY_REDIS_STORE_HOSTS: ${{ env.DRAGONFLY_REDIS_STORE_HOSTS }}
           DRAGONFLY_REDIS_STORE_PASSWORD: ${{ env.DRAGONFLY_REDIS_STORE_PASSWORD }}
         run: |
-          ssh root@${{ matrix.host }} "
+          ssh yral-auth-manager@${{ matrix.host }} "
             cd /home/yral-auth
 
             echo 'Pulling latest images...'
@@ -184,7 +185,7 @@ jobs:
 
       - name: Verify deployment
         run: |
-          ssh root@${{ matrix.host }} "
+          ssh yral-auth-manager@${{ matrix.host }} "
             cd /home/yral-auth
 
             echo '=== Container Status ==='
