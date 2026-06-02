@@ -109,7 +109,7 @@ jobs:
         with:
           name: build-musl
           path: |
-            target/x86_64-unknown-linux-musl/release/yral-auth-v2
+            target/x86_64-unknown-linux-musl/release/yral-auth
             target/x86_64-unknown-linux-musl/release/hash.txt
             target/site
             .empty

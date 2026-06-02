@@ -1,7 +1,7 @@
 FROM scratch
 
 WORKDIR /app
-COPY ./target/x86_64-unknown-linux-musl/release/yral-auth-v2 .
+COPY ./target/x86_64-unknown-linux-musl/release/yral-auth .
 COPY ./target/x86_64-unknown-linux-musl/release/hash.txt .
 
 COPY ./target/site ./site
@@ -14,4 +14,4 @@ ENV LEPTOS_TAILWIND_VERSION="v4.0.15"
 
 EXPOSE 8080
 
-CMD ["./yral-auth-v2"]
+CMD ["./yral-auth"]

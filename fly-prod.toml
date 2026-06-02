@@ -1,7 +1,7 @@
 # fly.toml - used for PR preview deployments on Fly.io
 # Production deployment is on Hetzner (see deploy-hetzner.yml)
 
-app = 'yral-auth-v2'
+app = 'yral-auth'
 primary_region = 'sin'
 
 [build]

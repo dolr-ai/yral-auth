@@ -2,4 +2,4 @@
 set -e
 
 echo "Starting application..."
-exec /app/yral-auth-v2
+exec /app/yral-auth
