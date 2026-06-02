@@ -91,7 +91,6 @@ async fn main() {
             send_default_pii: false, // Keep false, manually add safe data
             attach_stacktrace: true,
             before_send: Some(yral_auth::middleware::sentry_scrub::create_before_send()),
-            before_send: Some(yral_auth::middleware::sentry_scrub::create_before_send()),
             ..Default::default()
         },
     ));
@@ -140,7 +139,6 @@ async fn main() {
         .with_state(app_state)
         .merge(server_routes(ctx))
         .layer(axum::middleware::from_fn(
-            yral_auth::middleware::http_logging_middleware,
             yral_auth::middleware::http_logging_middleware,
         )) // HTTP logging before Sentry
         .layer(sentry_tower_layer);
