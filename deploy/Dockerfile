@@ -7,7 +7,7 @@ RUN apk add --no-cache ca-certificates wget
 WORKDIR /app
 
 # Copy the binary and site assets
-COPY ./target/x86_64-unknown-linux-musl/release/yral-auth-v2 .
+COPY ./target/x86_64-unknown-linux-musl/release/yral-auth .
 COPY ./target/x86_64-unknown-linux-musl/release/hash.txt .
 COPY ./target/site ./site
 

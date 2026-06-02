@@ -1,7 +1,7 @@
 services:
 
   yral-auth:
-    image: ${APP_IMAGE:-ghcr.io/dolr-ai/yral-auth-v2}:${IMAGE_TAG:-latest}
+    image: ${APP_IMAGE:-ghcr.io/dolr-ai/yral-auth}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       # Secrets (injected at runtime)
@@ -27,7 +27,7 @@ services:
         MCowBQYDK2VwAyEAKpZNfPOONR9AXiaGmHv8AHemm4SNK0uh+mf523ho5KU=
         -----END PUBLIC KEY-----
       # Leptos configuration
-      LEPTOS_OUTPUT_NAME: yral-auth-v2
+      LEPTOS_OUTPUT_NAME: yral-auth
       LEPTOS_SITE_ROOT: site
       LEPTOS_SITE_PKG_DIR: pkg
       LEPTOS_SITE_ADDR: 0.0.0.0:8080
