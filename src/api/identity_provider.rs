@@ -58,8 +58,8 @@ pub async fn try_extract_principal_from_oauth_sub(
         // User had deleted their account,
         // don't allow creation of new account again
         log::debug!("Principal {principal_str} is banned for {provider} : {email:?}");
-        // Ok(None) // temporarily allow banned users
-        Err(AuthErrorKind::Banned)
+        // Temporarily allow banned users to create a new account
+        Ok(None)
     }
 }
 
