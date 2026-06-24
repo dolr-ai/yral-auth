@@ -94,21 +94,21 @@ jobs:
         with:
           url: https://vault.yral.com
           method: jwt
-          role: yral-auth-role
+          role: yral-auth-v2-role
           jwtGithubAudience: "https://github.com/dolr-ai"
           secrets: |
-            secret/data/yral-auth/AUTH_SESSION_COOKIE_SIGNING_SECRET_KEY value | COOKIE_KEY ;
-            secret/data/yral-auth/GOOGLE_SIGNING_OAUTH_CLIENT_CREDENTIAL_CLIENT_SECRET value | GOOGLE_CLIENT_SECRET ;
-            secret/data/yral-auth/AUTH_JWT_ES256_SIGNING_SECRET_KEY_PEM value | JWT_EC_PEM ;
-            secret/data/yral-auth/CLIENT_JWT_ED_PEM value | CLIENT_JWT_ED_PEM ;
-            secret/data/yral-auth/APPLE_AUTH_KEY_PEM value | APPLE_AUTH_KEY_PEM ;
-            secret/data/yral-auth/WHATAPP_MESSAGE_SERVICE_API_KEY value | WHATSAPP_API_KEY ;
-            secret/data/yral-auth/DRAGONFLY_REDIS_STORE_CA_CERT value | DRAGONFLY_REDIS_STORE_CA_CERT ;
-            secret/data/yral-auth/DRAGONFLY_REDIS_STORE_CLIENT_CERT value | DRAGONFLY_REDIS_STORE_CLIENT_CERT ;
-            secret/data/yral-auth/DRAGONFLY_REDIS_STORE_CLIENT_KEY value | DRAGONFLY_REDIS_STORE_CLIENT_KEY ;
-            secret/data/yral-auth/DRAGONFLY_REDIS_STORE_HOSTS value | DRAGONFLY_REDIS_STORE_HOSTS ;
-            secret/data/yral-auth/DRAGONFLY_REDIS_STORE_PASSWORD value | DRAGONFLY_REDIS_STORE_PASSWORD ;
-            secret/data/yral-auth/AUTH_MACHINES_ACCESS_KEY value | AUTH_MACHINES_ACCESS_KEY ;
+            secret/data/yral-auth-v2/AUTH_SESSION_COOKIE_SIGNING_SECRET_KEY value | COOKIE_KEY ;
+            secret/data/yral-auth-v2/GOOGLE_SIGNING_OAUTH_CLIENT_CREDENTIAL_CLIENT_SECRET value | GOOGLE_CLIENT_SECRET ;
+            secret/data/yral-auth-v2/AUTH_JWT_ES256_SIGNING_SECRET_KEY_PEM value | JWT_EC_PEM ;
+            secret/data/yral-auth-v2/CLIENT_JWT_ED_PEM value | CLIENT_JWT_ED_PEM ;
+            secret/data/yral-auth-v2/APPLE_AUTH_KEY_PEM value | APPLE_AUTH_KEY_PEM ;
+            secret/data/yral-auth-v2/WHATAPP_MESSAGE_SERVICE_API_KEY value | WHATSAPP_API_KEY ;
+            secret/data/yral-auth-v2/DRAGONFLY_REDIS_STORE_CA_CERT value | DRAGONFLY_REDIS_STORE_CA_CERT ;
+            secret/data/yral-auth-v2/DRAGONFLY_REDIS_STORE_CLIENT_CERT value | DRAGONFLY_REDIS_STORE_CLIENT_CERT ;
+            secret/data/yral-auth-v2/DRAGONFLY_REDIS_STORE_CLIENT_KEY value | DRAGONFLY_REDIS_STORE_CLIENT_KEY ;
+            secret/data/yral-auth-v2/DRAGONFLY_REDIS_STORE_HOSTS value | DRAGONFLY_REDIS_STORE_HOSTS ;
+            secret/data/yral-auth-v2/DRAGONFLY_REDIS_STORE_PASSWORD value | DRAGONFLY_REDIS_STORE_PASSWORD ;
+            secret/data/yral-auth-v2/AUTH_MACHINES_ACCESS_KEY value | AUTH_MACHINES_ACCESS_KEY ;
 
       - name: Setup SSH key
         uses: webfactory/ssh-agent@v0.9.0
