@@ -97,11 +97,13 @@ fn build_docker_image(root: &Path, tag: &str) -> Result<()> {
     println!("{}", "=".repeat(60));
 
     let full_tag = format!("{IMAGE_NAME}:{tag}");
-    println!("  → building image {full_tag}");
+    println!("  → building image {full_tag} (linux/amd64)");
     run(
         "docker",
         &[
             "build",
+            "--platform",
+            "linux/amd64",
             "-f",
             "deploy/Dockerfile",
             "-t",
@@ -167,20 +169,20 @@ fn secret_envs() -> Result<Vec<(&'static str, String)>> {
 
 /// Deploy to a single Hetzner host via SSH.
 /// Transfers the Docker image tarball directly — no registry needed.
-fn deploy_to_host(root: &Path, host: &str, tag: &str, tarball: &Path, ssh_key: &Path) -> Result<()> {
+/// Uses root@ with the default SSH key. Deploys to /home/yral-auth-manager/
+/// (same path as CI) so both are interchangeable.
+fn deploy_to_host(root: &Path, host: &str, tag: &str, tarball: &Path) -> Result<()> {
     println!("\n{}", "=".repeat(60));
     println!("Deploying to {host}...");
     println!("{}", "=".repeat(60));
 
     let user = "yral-auth-manager";
-    let remote = format!("{user}@{host}");
+    let remote = format!("root@{host}");
+    let deploy_dir = format!("/home/{user}");
     let tarball_name = tarball.file_name().unwrap().to_str().unwrap();
 
-    // SSH command prefix used by rsync -e and ssh directly
-    let ssh_opts = format!(
-        "ssh -i {} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
-        ssh_key.display()
-    );
+    // SSH options (no -i, uses default key)
+    let ssh_opts = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null";
 
     // Step 1: Sync deploy/ files to the server
     println!("  → syncing deploy/ files...");
@@ -190,9 +192,9 @@ fn deploy_to_host(root: &Path, host: &str, tag: &str, tarball: &Path, ssh_key: &
             "-avz",
             "--delete",
             "-e",
-            &ssh_opts,
+            ssh_opts,
             "./deploy/",
-            &format!("{remote}:/home/{user}/"),
+            &format!("{remote}:{deploy_dir}/"),
         ],
         root,
     )?;
@@ -205,37 +207,63 @@ fn deploy_to_host(root: &Path, host: &str, tag: &str, tarball: &Path, ssh_key: &
             "-avz",
             "--progress",
             "-e",
-            &ssh_opts,
+            ssh_opts,
             tarball.to_str().unwrap(),
-            &format!("{remote}:/home/{user}/{tarball_name}"),
+            &format!("{remote}:{deploy_dir}/{tarball_name}"),
         ],
         root,
     )?;
 
     // Step 3: Load the image on the server
     println!("  → loading image on server...");
-    let load_cmd = format!("docker load -i /home/{user}/{tarball_name}");
-    run("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &load_cmd], root)?;
+    let load_cmd = format!("docker load -i {deploy_dir}/{tarball_name}");
+    run("ssh", &["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &load_cmd], root)?;
 
     // Step 4: Stop existing containers
     println!("  → stopping existing containers...");
-    let stop_cmd = format!("cd /home/{user} && docker compose down --remove-orphans || true");
-    run("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &stop_cmd], root)?;
+    let stop_cmd = format!("cd {deploy_dir} && docker compose down --remove-orphans || true");
+    run("ssh", &["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &stop_cmd], root)?;
 
     // Step 5: Start with new image + secrets
     println!("  → starting services...");
 
-    // Build the env var prefix for docker compose up
+    // Build the env file content (secrets only — APP_IMAGE/IMAGE_TAG passed inline)
     let secrets = secret_envs()?;
-    let mut env_prefix = format!("APP_IMAGE={IMAGE_NAME} IMAGE_TAG={tag}");
+    let mut env_file = String::new();
     for (key, val) in &secrets {
-        // Escape single quotes in values for shell safety
+        // Use single quotes — no escaping needed inside single quotes
+        // except for single quotes themselves (replace ' with '\''')
         let escaped = val.replace('\'', "'\\''");
-        env_prefix.push_str(&format!(" {key}='{escaped}'"));
+        env_file.push_str(&format!("{key}='{escaped}'\n"));
     }
 
-    let up_cmd = format!("cd /home/{user} && {env_prefix} docker compose up -d");
-    run("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &up_cmd], root)?;
+    // Pipe the env file to the server via SSH stdin, write to a temp file,
+    // run docker compose with --env-file, then delete the temp file.
+    // The temp file lives for only the duration of the docker compose command.
+    let remote_cmd = format!(
+        "ENV_FILE=$(mktemp) && cat > $ENV_FILE && cd {deploy_dir} && APP_IMAGE={IMAGE_NAME} IMAGE_TAG={tag} docker compose --env-file $ENV_FILE up -d && rm -f $ENV_FILE"
+    );
+
+    let mut child = std::process::Command::new("ssh")
+        .args([
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "ConnectTimeout=10",
+            &remote,
+            &remote_cmd,
+        ])
+        .current_dir(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .context("failed to spawn ssh for docker compose up")?;
+    use std::io::Write;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(env_file.as_bytes()).context("failed to write env file to stdin")?;
+    }
+    let up_result = child.wait_with_output().context("failed to wait for ssh")?;
+    anyhow::ensure!(up_result.status.success(), "docker compose up failed");
 
     // Step 6: Wait and verify
     println!("  → waiting for services to start...");
@@ -243,21 +271,21 @@ fn deploy_to_host(root: &Path, host: &str, tag: &str, tarball: &Path, ssh_key: &
 
     println!("  → checking status...");
     let status_cmd = format!(
-        "cd /home/{user} && docker compose ps && echo '---' && docker compose logs --tail=20 yral-auth 2>/dev/null || true"
+        "cd {deploy_dir} && docker compose ps && echo '---' && docker compose logs --tail=20 yral-auth 2>/dev/null || true"
     );
-    let output = run_capture("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &status_cmd], root)?;
+    let output = run_capture("ssh", &["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &status_cmd], root)?;
     println!("{output}");
 
     // Step 7: Health check
     println!("  → health check...");
     let health_cmd = format!("curl -sf http://localhost/healthz || echo 'Health check failed'");
-    let health = run_capture("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &health_cmd], root)?;
+    let health = run_capture("ssh", &["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &health_cmd], root)?;
     println!("  health: {health}");
 
     // Step 8: Clean up tarball on server
     println!("  → cleaning up tarball on server...");
-    let cleanup_cmd = format!("rm -f /home/{user}/{tarball_name}");
-    run("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &cleanup_cmd], root)?;
+    let cleanup_cmd = format!("rm -f {deploy_dir}/{tarball_name}");
+    run("ssh", &["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &cleanup_cmd], root)?;
 
     println!("  ✓ {host} deployed");
     Ok(())
@@ -283,13 +311,6 @@ async fn deploy() -> Result<()> {
     println!("  image tag: {tag}");
     println!("  hosts:     {:?}", env_list("HETZNER_HOSTS")?);
 
-    // 0. Write SSH private key to a temp file
-    let ssh_key_content = require_env("SSH_PRIVATE_KEY")?;
-    let ssh_key = root.join("target/.ssh-key");
-    std::fs::write(&ssh_key, &ssh_key_content)?;
-    std::fs::set_permissions(&ssh_key, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    println!("  ✓ SSH key written to {}", ssh_key.display());
-
     // 1. Build
     build_leptos(&root)?;
 
@@ -302,13 +323,12 @@ async fn deploy() -> Result<()> {
     // 4. Deploy to each host (serial — one at a time)
     let hosts = env_list("HETZNER_HOSTS")?;
     for host in &hosts {
-        deploy_to_host(&root, host, &tag, &tarball, &ssh_key)?;
+        deploy_to_host(&root, host, &tag, &tarball)?;
     }
 
-    // 5. Clean up local tarball + SSH key
-    println!("\n  → cleaning up local files...");
+    // 5. Clean up local tarball
+    println!("\n  → cleaning up local tarball...");
     std::fs::remove_file(&tarball).ok();
-    std::fs::remove_file(&ssh_key).ok();
 
     println!("\n{}", "=".repeat(60));
     println!("✓ Deployment complete — {} host(s)", hosts.len());
