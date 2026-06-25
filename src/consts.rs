@@ -1,6 +1,13 @@
+use std::sync::LazyLock;
+use url::Url;
 use web_time::Duration;
 
 pub const GOOGLE_ISSUER_URL: &str = "https://accounts.google.com";
+
+/// Base URL for the off-chain agent API.
+/// Used for account deletion (Google Play policy compliance).
+pub static OFF_CHAIN_AGENT_URL: LazyLock<Url> =
+    LazyLock::new(|| Url::parse("https://offchain.yral.com").unwrap());
 pub const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 

@@ -8,6 +8,7 @@ use leptos_router::{
 use crate::{
     context::provide_client_id_validator,
     page::{
+        account::{account::AccountPage, oauth_callback::OauthCallbackPage},
         auth::AuthPage,
         error_page::ErrorPage,
         oauth_login::{oauth_callback::OAuthCallbackPage, oauth_redirector::OAuthRedirectorPage},
@@ -54,6 +55,8 @@ pub fn App() -> impl IntoView {
         <Router>
             <main>
                 <Routes fallback=|| "Page not found.".into_view()>
+                    <Route path=path!("/account") view=AccountPage />
+                    <Route path=path!("/account/callback") view=OauthCallbackPage />
                     <Route path=path!("/oauth/auth") view=AuthPage />
                     <Route path=path!("/oauth_redirector") view=OAuthRedirectorPage />
                     <Route path=path!("/oauth_callback") view=OAuthCallbackPage />

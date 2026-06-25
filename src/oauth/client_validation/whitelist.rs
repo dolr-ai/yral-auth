@@ -85,6 +85,16 @@ pub fn default_oauth_clients() -> HashMap<String, OAuthClient> {
             ],
             OAuthClientType::Web
         },
+        // Self-service account management (auth.yral.com)
+        {
+            "7a2f3b8c-1d4e-4f5a-9b6c-7d8e9f0a1b2c",
+            [
+                "https://auth.yral.com/account/callback",
+                "https://auth.dolr.ai/account/callback",
+                "http://localhost:3000/account/callback"
+            ],
+            OAuthClientType::Web
+        },
     };
 
     oauth_clients
