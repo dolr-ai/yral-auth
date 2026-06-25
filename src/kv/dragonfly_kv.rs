@@ -355,6 +355,7 @@ impl SentinelConnectionManager {
                     }
                 }
                 "+sdown" => {
+                    #[allow(clippy::collapsible_match)]
                     if payload.contains("master") && payload.contains(&self.master_name) {
                         tracing::warn!(
                             payload = %payload,

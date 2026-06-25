@@ -8,7 +8,7 @@ use leptos_router::{
 use crate::{
     context::provide_client_id_validator,
     page::{
-        account::{account::AccountPage, oauth_callback::OauthCallbackPage},
+        account::{oauth_callback::OauthCallbackPage, page::AccountPage},
         auth::AuthPage,
         error_page::ErrorPage,
         oauth_login::{oauth_callback::OAuthCallbackPage, oauth_redirector::OAuthRedirectorPage},

@@ -1,2 +1,2 @@
-pub mod account;
 pub mod oauth_callback;
+pub mod page;

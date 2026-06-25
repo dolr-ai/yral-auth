@@ -9,7 +9,7 @@ use ic_agent::{
     identity::{Delegation, Secp256k1Identity, SignedDelegation},
     Identity,
 };
-use leptos::{form, prelude::*};
+use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use web_time::Duration;
 use yral_identity::msg_builder::Message;

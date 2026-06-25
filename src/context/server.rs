@@ -20,10 +20,6 @@ use openidconnect::core::CoreJsonWebKeySet;
 #[cfg(feature = "google-oauth")]
 use openidconnect::ClientSecret;
 use p256::pkcs8::DecodePublicKey;
-#[cfg(feature = "apple-oauth")]
-use p256::pkcs8::{DecodePrivateKey, EncodePublicKey};
-#[cfg(feature = "apple-oauth")]
-use sha2::{Digest, Sha256};
 
 #[cfg(feature = "phone-auth")]
 use crate::context::message_delivery_service::MessageDeliveryService;

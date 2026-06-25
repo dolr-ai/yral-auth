@@ -275,7 +275,7 @@ async fn generate_oauth_login_code(
     );
     let exchange = oauth2
         .exchange_code(AuthorizationCode::new(code))
-        .map_err(|e| AuthErrorKind::unexpected(e))?
+        .map_err(AuthErrorKind::unexpected)?
         .set_redirect_uri(Cow::Owned(redirect_uri));
 
     #[cfg(feature = "apple-oauth")]
