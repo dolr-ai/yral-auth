@@ -1,27 +1,21 @@
 /// Deployment tests for yral-auth — run from your local machine.
 ///
-/// These tests replace the CI workflow (`.github/workflows/deploy-hetzner.yml`)
-/// for manual deploys. All secrets come from `.env` (loaded via direnv).
+/// This is a local replacement for the CI workflow
+/// (`.github/workflows/deploy-hetzner.yml`). All secrets come from `.env`
+/// (loaded via direnv).
 ///
 /// # Flow
 ///
 /// 1. **Build** the musl binary + WASM via `cargo leptos build --release`
 /// 2. **Build** the Docker image (using `deploy/Dockerfile`)
-/// 3. **Push** the image to `ghcr.io/dolr-ai/yral-auth:<tag>`
-/// 4. **SSH** to each Hetzner host, sync `deploy/` files, pull image, restart
+/// 3. **Save** the image to a tarball (no registry needed)
+/// 4. **Transfer** the tarball + deploy files to each Hetzner host via rsync
+/// 5. **Load** the image, restart docker compose with secrets
 ///
-/// # Commands
+/// # Command
 ///
 /// ```sh
-/// # Full deploy (build + push + SSH deploy)
-/// cargo test -p task_runner -- --ignored deploy --nocapture
-///
-/// # Build only (no push, no deploy) — useful for testing the build locally
-/// cargo test -p task_runner -- --ignored build_only --nocapture
-///
-/// # Deploy only (skip build — use an already-pushed image tag)
-/// # Set IMAGE_TAG in .env to the tag you want to deploy.
-/// cargo test -p task_runner -- --ignored deploy_only --nocapture
+/// cargo test -p task_runner -- --ignored deploy --nocapture --test-threads=1
 /// ```
 ///
 /// # Environment variables (set in .env at the repo root)
@@ -50,12 +44,11 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::shell::{
-    env_list, env_or, require_env, run, run_capture, run_with_env, workspace_root,
+    env_list, env_or, run, run_capture, run_with_env, workspace_root,
 };
 
-/// Docker registry + image name.
-const DOCKER_REGISTRY: &str = "ghcr.io";
-const IMAGE_NAME: &str = "dolr-ai/yral-auth";
+/// Docker registry + image name (used for tagging only — no registry push).
+const IMAGE_NAME: &str = "yral-auth";
 
 // ---------------------------------------------------------------------------
 // Build steps
@@ -91,7 +84,7 @@ fn build_leptos(root: &Path) -> Result<()> {
     let size = std::fs::metadata(&binary)
         .map(|m| m.len())
         .unwrap_or(0);
-    println!("  binary: {} ({} bytes)", binary.display(), size);
+    println!("\n  ✓ binary: {} ({} bytes)", binary.display(), size);
     anyhow::ensure!(size > 0, "binary is empty — musl cross-compile may have failed");
 
     Ok(())
@@ -103,7 +96,8 @@ fn build_docker_image(root: &Path, tag: &str) -> Result<()> {
     println!("Step 2: Building Docker image...");
     println!("{}", "=".repeat(60));
 
-    let full_tag = format!("{DOCKER_REGISTRY}/{IMAGE_NAME}:{tag}");
+    let full_tag = format!("{IMAGE_NAME}:{tag}");
+    println!("  → building image {full_tag}");
     run(
         "docker",
         &[
@@ -116,42 +110,23 @@ fn build_docker_image(root: &Path, tag: &str) -> Result<()> {
         ],
         root,
     )?;
-    println!("  image: {full_tag}");
+    println!("  ✓ image built: {full_tag}");
     Ok(())
 }
 
-/// Push the Docker image to GHCR.
-fn push_docker_image(root: &Path, tag: &str) -> Result<()> {
+/// Save the Docker image to a tarball for transfer to servers.
+fn save_docker_image(root: &Path, tag: &str) -> Result<std::path::PathBuf> {
     println!("\n{}", "=".repeat(60));
-    println!("Step 3: Pushing Docker image to GHCR...");
+    println!("Step 3: Saving Docker image to tarball...");
     println!("{}", "=".repeat(60));
 
-    let username = require_env("GHCR_USERNAME")?;
-    let token = require_env("GHCR_TOKEN")?;
-
-    // Login (pipe token via stdin for --password-stdin)
-    println!("  Logging in to GHCR...");
-    let login_status = std::process::Command::new("docker")
-        .args(["login", DOCKER_REGISTRY, "-u", &username, "--password-stdin"])
-        .current_dir(root)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-        .context("failed to spawn docker login")?;
-    use std::io::Write;
-    let mut child = login_status;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(token.as_bytes()).context("failed to write token to stdin")?;
-    }
-    let output = child.wait_with_output().context("failed to wait for docker login")?;
-    anyhow::ensure!(output.status.success(), "docker login failed");
-
-    // Push
-    let full_tag = format!("{DOCKER_REGISTRY}/{IMAGE_NAME}:{tag}");
-    run("docker", &["push", &full_tag], root)?;
-    println!("  pushed: {full_tag}");
-    Ok(())
+    let full_tag = format!("{IMAGE_NAME}:{tag}");
+    let tarball = root.join("target").join(format!("{IMAGE_NAME}-{tag}.tar"));
+    println!("  → saving {full_tag} to {}", tarball.display());
+    run("docker", &["save", "-o", tarball.to_str().unwrap(), &full_tag], root)?;
+    let size = std::fs::metadata(&tarball).map(|m| m.len()).unwrap_or(0);
+    println!("  ✓ tarball: {} ({} MB)", tarball.display(), size / 1_000_000);
+    Ok(tarball)
 }
 
 // ---------------------------------------------------------------------------
@@ -191,77 +166,98 @@ fn secret_envs() -> Result<Vec<(&'static str, String)>> {
 }
 
 /// Deploy to a single Hetzner host via SSH.
-fn deploy_to_host(root: &Path, host: &str, tag: &str) -> Result<()> {
+/// Transfers the Docker image tarball directly — no registry needed.
+fn deploy_to_host(root: &Path, host: &str, tag: &str, tarball: &Path, ssh_key: &Path) -> Result<()> {
     println!("\n{}", "=".repeat(60));
     println!("Deploying to {host}...");
     println!("{}", "=".repeat(60));
 
     let user = "yral-auth-manager";
     let remote = format!("{user}@{host}");
-    let full_tag = format!("{DOCKER_REGISTRY}/{IMAGE_NAME}:{tag}");
+    let tarball_name = tarball.file_name().unwrap().to_str().unwrap();
+
+    // SSH command prefix used by rsync -e and ssh directly
+    let ssh_opts = format!(
+        "ssh -i {} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+        ssh_key.display()
+    );
 
     // Step 1: Sync deploy/ files to the server
-    println!("  Syncing deploy/ files...");
+    println!("  → syncing deploy/ files...");
     run(
         "rsync",
         &[
             "-avz",
             "--delete",
+            "-e",
+            &ssh_opts,
             "./deploy/",
             &format!("{remote}:/home/{user}/"),
         ],
         root,
     )?;
 
-    // Step 2: Pull the image on the server
-    println!("  Pulling image {full_tag}...");
-    let pull_cmd = format!(
-        "cd /home/{user} && \
-         echo '{}' | docker login {DOCKER_REGISTRY} -u {} --password-stdin && \
-         APP_IMAGE={DOCKER_REGISTRY}/{IMAGE_NAME} IMAGE_TAG={tag} docker compose pull",
-        require_env("GHCR_TOKEN")?,
-        require_env("GHCR_USERNAME")?,
-    );
-    run("ssh", &["-o", "ConnectTimeout=10", &remote, &pull_cmd], root)?;
+    // Step 2: Transfer the Docker image tarball
+    println!("  → transferring image tarball ({tarball_name})...");
+    run(
+        "rsync",
+        &[
+            "-avz",
+            "--progress",
+            "-e",
+            &ssh_opts,
+            tarball.to_str().unwrap(),
+            &format!("{remote}:/home/{user}/{tarball_name}"),
+        ],
+        root,
+    )?;
 
-    // Step 3: Stop existing containers
-    println!("  Stopping existing containers...");
+    // Step 3: Load the image on the server
+    println!("  → loading image on server...");
+    let load_cmd = format!("docker load -i /home/{user}/{tarball_name}");
+    run("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &load_cmd], root)?;
+
+    // Step 4: Stop existing containers
+    println!("  → stopping existing containers...");
     let stop_cmd = format!("cd /home/{user} && docker compose down --remove-orphans || true");
-    run("ssh", &["-o", "ConnectTimeout=10", &remote, &stop_cmd], root)?;
+    run("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &stop_cmd], root)?;
 
-    // Step 4: Start with new image + secrets
-    println!("  Starting services with new image...");
+    // Step 5: Start with new image + secrets
+    println!("  → starting services...");
 
     // Build the env var prefix for docker compose up
     let secrets = secret_envs()?;
-    let mut env_prefix = format!(
-        "APP_IMAGE={DOCKER_REGISTRY}/{IMAGE_NAME} IMAGE_TAG={tag}"
-    );
+    let mut env_prefix = format!("APP_IMAGE={IMAGE_NAME} IMAGE_TAG={tag}");
     for (key, val) in &secrets {
         // Escape single quotes in values for shell safety
         let escaped = val.replace('\'', "'\\''");
         env_prefix.push_str(&format!(" {key}='{escaped}'"));
     }
 
-    let up_cmd = format!(
-        "cd /home/{user} && {env_prefix} docker compose up -d"
-    );
-    run("ssh", &["-o", "ConnectTimeout=10", &remote, &up_cmd], root)?;
+    let up_cmd = format!("cd /home/{user} && {env_prefix} docker compose up -d");
+    run("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &up_cmd], root)?;
 
-    // Step 5: Wait and verify
-    println!("  Waiting for services to start...");
+    // Step 6: Wait and verify
+    println!("  → waiting for services to start...");
     std::thread::sleep(std::time::Duration::from_secs(10));
 
-    println!("  Checking status...");
-    let status_cmd = format!("cd /home/{user} && docker compose ps && echo '---' && docker compose logs --tail=20 yral-auth 2>/dev/null || true");
-    let output = run_capture("ssh", &["-o", "ConnectTimeout=10", &remote, &status_cmd], root)?;
+    println!("  → checking status...");
+    let status_cmd = format!(
+        "cd /home/{user} && docker compose ps && echo '---' && docker compose logs --tail=20 yral-auth 2>/dev/null || true"
+    );
+    let output = run_capture("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &status_cmd], root)?;
     println!("{output}");
 
-    // Step 6: Health check
-    println!("  Health check...");
+    // Step 7: Health check
+    println!("  → health check...");
     let health_cmd = format!("curl -sf http://localhost/healthz || echo 'Health check failed'");
-    let health = run_capture("ssh", &["-o", "ConnectTimeout=10", &remote, &health_cmd], root)?;
+    let health = run_capture("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &health_cmd], root)?;
     println!("  health: {health}");
+
+    // Step 8: Clean up tarball on server
+    println!("  → cleaning up tarball on server...");
+    let cleanup_cmd = format!("rm -f /home/{user}/{tarball_name}");
+    run("ssh", &["-i", ssh_key.to_str().unwrap(), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10", &remote, &cleanup_cmd], root)?;
 
     println!("  ✓ {host} deployed");
     Ok(())
@@ -271,10 +267,10 @@ fn deploy_to_host(root: &Path, host: &str, tag: &str) -> Result<()> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Full deploy: build → docker build → push → SSH deploy to all hosts.
+/// Full deploy: build → docker build → save tarball → transfer + deploy to all hosts.
 ///
 /// ```sh
-/// cargo test -p task_runner -- --ignored deploy --nocapture
+/// cargo test -p task_runner -- --ignored deploy --nocapture --test-threads=1
 /// ```
 #[tokio::test]
 #[ignore = "deploys yral-auth to production Hetzner hosts — run explicitly"]
@@ -287,72 +283,35 @@ async fn deploy() -> Result<()> {
     println!("  image tag: {tag}");
     println!("  hosts:     {:?}", env_list("HETZNER_HOSTS")?);
 
+    // 0. Write SSH private key to a temp file
+    let ssh_key_content = require_env("SSH_PRIVATE_KEY")?;
+    let ssh_key = root.join("target/.ssh-key");
+    std::fs::write(&ssh_key, &ssh_key_content)?;
+    std::fs::set_permissions(&ssh_key, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    println!("  ✓ SSH key written to {}", ssh_key.display());
+
     // 1. Build
     build_leptos(&root)?;
 
     // 2. Docker build
     build_docker_image(&root, &tag)?;
 
-    // 3. Push
-    push_docker_image(&root, &tag)?;
+    // 3. Save image to tarball
+    let tarball = save_docker_image(&root, &tag)?;
 
     // 4. Deploy to each host (serial — one at a time)
     let hosts = env_list("HETZNER_HOSTS")?;
     for host in &hosts {
-        deploy_to_host(&root, host, &tag)?;
+        deploy_to_host(&root, host, &tag, &tarball, &ssh_key)?;
     }
+
+    // 5. Clean up local tarball + SSH key
+    println!("\n  → cleaning up local files...");
+    std::fs::remove_file(&tarball).ok();
+    std::fs::remove_file(&ssh_key).ok();
 
     println!("\n{}", "=".repeat(60));
     println!("✓ Deployment complete — {} host(s)", hosts.len());
     println!("{}", "=".repeat(60));
-    Ok(())
-}
-
-/// Build only — no push, no deploy. Useful for testing the build locally.
-///
-/// ```sh
-/// cargo test -p task_runner -- --ignored build_only --nocapture
-/// ```
-#[tokio::test]
-#[ignore = "builds yral-auth locally — run explicitly"]
-async fn build_only() -> Result<()> {
-    let root = workspace_root();
-    let tag = env_or("IMAGE_TAG", "latest");
-
-    println!("yral-auth build only");
-    println!("  workspace: {}", root.display());
-    println!("  image tag: {tag}");
-
-    build_leptos(&root)?;
-    build_docker_image(&root, &tag)?;
-
-    println!("\n✓ Build complete (not pushed, not deployed)");
-    Ok(())
-}
-
-/// Deploy only — skip build, use an already-pushed image tag.
-///
-/// Set `IMAGE_TAG` in `.env` to the tag you want to deploy.
-///
-/// ```sh
-/// cargo test -p task_runner -- --ignored deploy_only --nocapture
-/// ```
-#[tokio::test]
-#[ignore = "deploys an existing yral-auth image to Hetzner — run explicitly"]
-async fn deploy_only() -> Result<()> {
-    let root = workspace_root();
-    let tag = env_or("IMAGE_TAG", "latest");
-
-    println!("yral-auth deploy only (no build)");
-    println!("  workspace: {}", root.display());
-    println!("  image tag: {tag}");
-    println!("  hosts:     {:?}", env_list("HETZNER_HOSTS")?);
-
-    let hosts = env_list("HETZNER_HOSTS")?;
-    for host in &hosts {
-        deploy_to_host(&root, host, &tag)?;
-    }
-
-    println!("\n✓ Deploy complete — {} host(s)", hosts.len());
     Ok(())
 }

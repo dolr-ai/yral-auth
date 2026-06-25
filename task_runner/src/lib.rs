@@ -30,14 +30,8 @@
 /// # Usage
 ///
 /// ```sh
-/// # Full deploy: build → docker build → push → SSH deploy to all hosts
-/// cargo test -p task_runner -- --ignored deploy --nocapture
-///
-/// # Build only (no push, no deploy)
-/// cargo test -p task_runner -- --ignored build_only --nocapture
-///
-/// # Deploy only (skip build, use existing image tag)
-/// cargo test -p task_runner -- --ignored deploy_only --nocapture
+/// # Full deploy: build → docker build → save tarball → transfer + deploy
+/// cargo test -p task_runner -- --ignored deploy --nocapture --test-threads=1
 /// ```
 pub mod shell;
 

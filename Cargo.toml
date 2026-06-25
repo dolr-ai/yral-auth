@@ -220,6 +220,6 @@ lib-default-features = false
 # Optional. Defaults to "release".
 lib-profile-release = "wasm-release"
 
-hash-files = true
+hash-files = false
 
 bin-target = "yral-auth"
