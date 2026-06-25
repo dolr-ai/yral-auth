@@ -98,12 +98,15 @@ pub async fn get_oauth_url_impl(
         )
         .set_redirect_uri(Cow::Owned(redirect_uri));
 
+    #[cfg(feature = "apple-oauth")]
     let authorize_builder = if provider != SupportedOAuthProviders::Apple {
         authorize_builder.set_pkce_challenge(pkce_challenge)
     } else {
         // Apple doesn't support PKCE, so we skip setting the challenge
         authorize_builder
     };
+    #[cfg(not(feature = "apple-oauth"))]
+    let authorize_builder = authorize_builder.set_pkce_challenge(pkce_challenge);
 
     #[cfg(feature = "google-oauth")]
     let authorize_builder = {
@@ -275,12 +278,15 @@ async fn generate_oauth_login_code(
         .map_err(|e| AuthErrorKind::unexpected(e))?
         .set_redirect_uri(Cow::Owned(redirect_uri));
 
+    #[cfg(feature = "apple-oauth")]
     let exchange = if provider != SupportedOAuthProviders::Apple {
         exchange.set_pkce_verifier(pkce_verifier)
     } else {
         // Apple doesn't support PKCE, so we skip setting the verifier
         exchange
     };
+    #[cfg(not(feature = "apple-oauth"))]
+    let exchange = exchange.set_pkce_verifier(pkce_verifier);
 
     let token_res = exchange
         .request_async(&ctx.oauth_http_client)

@@ -50,7 +50,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::shell::{
-    env_list, env_or, require_env, run, run_capture, workspace_root,
+    env_list, env_or, require_env, run, run_capture, run_with_env, workspace_root,
 };
 
 /// Docker registry + image name.
@@ -67,7 +67,7 @@ fn build_leptos(root: &Path) -> Result<()> {
     println!("Step 1: Building yral-auth (musl + WASM)...");
     println!("{}", "=".repeat(60));
 
-    run(
+    run_with_env(
         "cargo",
         &[
             "leptos",
@@ -79,14 +79,20 @@ fn build_leptos(root: &Path) -> Result<()> {
             "release-bin",
         ],
         root,
+        &[
+            ("LEPTOS_BIN_TARGET_TRIPLE", "x86_64-unknown-linux-musl"),
+            ("LEPTOS_HASH_FILES", "true"),
+            ("LEPTOS_TAILWIND_VERSION", "v4.0.15"),
+        ],
     )?;
 
-    // Verify the binary exists
+    // Verify the binary exists and is non-empty
     let binary = root.join("target/x86_64-unknown-linux-musl/release/yral-auth");
     let size = std::fs::metadata(&binary)
         .map(|m| m.len())
         .unwrap_or(0);
     println!("  binary: {} ({} bytes)", binary.display(), size);
+    anyhow::ensure!(size > 0, "binary is empty — musl cross-compile may have failed");
 
     Ok(())
 }

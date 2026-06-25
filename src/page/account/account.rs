@@ -1,26 +1,69 @@
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos_router::components::Redirect;
+use leptos::server_fn::codec::Json;
 
-use crate::api::delete_account::{
-    delete_account, get_delete_account_session, sign_out, SELF_SERVICE_CLIENT_ID,
-};
 use crate::components::{spinner::Spinner, yral_symbol::YralSymbol};
-use crate::oauth::SupportedOAuthProviders;
+
+/// Self-service OAuth client ID (registered in the whitelist).
+pub const SELF_SERVICE_CLIENT_ID: &str = "7a2f3b8c-1d4e-4f5a-9b6c-7d8e9f0a1b2c";
+
+// ---------------------------------------------------------------------------
+// Server functions (defined here so client stubs are available on hydrate)
+// ---------------------------------------------------------------------------
+
+/// Returns the authenticated principal from the session cookie, if any.
+#[server(endpoint = "get_delete_account_session")]
+pub async fn get_delete_account_session() -> Result<Option<String>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::api::delete_account::read_session_principal;
+        let principal = read_session_principal().await?;
+        Ok(principal.map(|p| p.to_text()))
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Ok(None)
+    }
+}
+
+/// Deletes the user's account.
+#[server(endpoint = "delete_account", input = Json, output = Json)]
+pub async fn delete_account() -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::api::delete_account::delete_account_impl;
+        delete_account_impl().await
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Ok(())
+    }
+}
+
+/// Clears the session cookie (sign out).
+#[server(endpoint = "sign_out")]
+pub async fn sign_out() -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::api::delete_account::clear_session_principal;
+        clear_session_principal().await?;
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = ();
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// OAuth login URL
+// ---------------------------------------------------------------------------
 
 /// Generates the OAuth redirect URL for self-service login.
-/// The user is sent through the standard `/oauth/auth` flow with our
-/// self-service client_id and a redirect back to `/account/callback`.
-fn oauth_login_url(provider: SupportedOAuthProviders) -> String {
+fn oauth_login_url() -> String {
     use base64::{prelude::BASE64_URL_SAFE, Engine};
 
-    // We use a fixed PKCE challenge (32 zero bytes) since we decode the
-    // auth code JWT directly rather than doing a full token exchange.
-    // The challenge is required by the AuthQuery struct but the verifier
-    // is never checked in our self-service callback flow.
     let code_challenge = BASE64_URL_SAFE.encode([0u8; 32]);
-
-    // Generate a random state from the current time (good enough for CSRF).
     let state = format!(
         "{}",
         web_time::SystemTime::now()
@@ -29,7 +72,6 @@ fn oauth_login_url(provider: SupportedOAuthProviders) -> String {
             .as_millis()
     );
 
-    // Build the URL using url::Url for proper query encoding.
     let mut url = url::Url::parse("https://auth.yral.com/oauth/auth").unwrap();
     {
         let mut query = url.query_pairs_mut();
@@ -43,19 +85,21 @@ fn oauth_login_url(provider: SupportedOAuthProviders) -> String {
             .append_pair("code_challenge", &code_challenge)
             .append_pair("code_challenge_method", "S256")
             .append_pair("state", &state)
-            .append_pair("provider", &provider.to_string());
+            .append_pair("provider", "google");
     }
 
-    // Convert to a relative path (strip the origin) so it works regardless
-    // of whether we're on localhost or production.
-    url.path_and_query()
-        .map(|pq| pq.to_string())
-        .unwrap_or_else(|| format!("/oauth/auth?client_id={SELF_SERVICE_CLIENT_ID}"))
+    let path = url.path();
+    let query = url.query().unwrap_or("");
+    format!("{path}?{query}")
 }
+
+// ---------------------------------------------------------------------------
+// Components
+// ---------------------------------------------------------------------------
 
 #[component]
 fn GoogleLoginButton() -> impl IntoView {
-    let url = oauth_login_url(SupportedOAuthProviders::Google);
+    let url = oauth_login_url();
 
     view! {
         <a
@@ -70,7 +114,7 @@ fn GoogleLoginButton() -> impl IntoView {
                     <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
                 </svg>
             </div>
-            <span class="text-gray-800 font-medium text-sm">Sign in with Google</span>
+            <span class="text-gray-800 font-medium text-sm">"Sign in with Google"</span>
         </a>
     }
 }
@@ -82,16 +126,16 @@ fn DeleteAccountPopup(show_popup: RwSignal<bool>) -> impl IntoView {
     let (success, set_success) = signal(false);
 
     let handle_delete = Action::new(move |&()| {
-        set_is_deleting(true);
+        set_is_deleting.set(true);
         set_error_msg.set(None);
         async move {
             match delete_account().await {
                 Ok(_) => {
-                    set_is_deleting(false);
+                    set_is_deleting.set(false);
                     set_success.set(true);
                 }
                 Err(e) => {
-                    set_is_deleting(false);
+                    set_is_deleting.set(false);
                     set_error_msg.set(Some(e.to_string()));
                 }
             }
@@ -141,7 +185,9 @@ fn DeleteAccountPopup(show_popup: RwSignal<bool>) -> impl IntoView {
                                 </button>
                                 <button
                                     class="flex flex-1 items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                                    on:click=move |_| handle_delete.dispatch(())
+                                    on:click=move |_| {
+                                        handle_delete.dispatch(());
+                                    }
                                     disabled=move || is_deleting.get()
                                 >
                                     <Show
@@ -164,7 +210,6 @@ fn DeleteAccountPopup(show_popup: RwSignal<bool>) -> impl IntoView {
                                 class="rounded-md bg-primary-600 px-6 py-2 text-sm font-semibold text-white hover:bg-primary-700"
                                 on:click=move |_| {
                                     show_popup.set(false);
-                                    // Reload the page to go back to the login screen
                                     let nav = leptos_router::hooks::use_navigate();
                                     nav("/account", Default::default());
                                 }
@@ -218,7 +263,9 @@ fn AuthenticatedContent(principal: String) -> impl IntoView {
 
                 <button
                     class="flex items-center justify-between rounded-lg bg-neutral-800 px-5 py-4 text-left hover:bg-neutral-700 transition-colors"
-                    on:click=move |_| sign_out_action.dispatch(())
+                    on:click=move |_| {
+                        sign_out_action.dispatch(());
+                    }
                     disabled=move || sign_out_action.pending().get()
                 >
                     <div class="flex items-center gap-3">

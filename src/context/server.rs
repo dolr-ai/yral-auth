@@ -362,7 +362,6 @@ impl ServerCtx {
                 jwk_pairs: JwkPairs::default(),
                 kv_store,
                 validator: ClientIdValidatorImpl::Const(Default::default()),
-                message_delivery_service,
             }
         }
     }

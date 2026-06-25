@@ -1,14 +1,28 @@
+use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::{components::Redirect, hooks::use_query, params::Params};
-use serde::Deserialize;
 
-use crate::api::delete_account::complete_account_login;
 use crate::components::spinner::Spinner;
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Params)]
 struct CallbackQuery {
     code: Option<String>,
     error: Option<String>,
+}
+
+/// Completes the OAuth login by decoding the auth code JWT and storing
+/// the principal in an encrypted session cookie.
+#[server(endpoint = "complete_account_login")]
+pub async fn complete_account_login(code: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::api::delete_account::complete_account_login_impl;
+        complete_account_login_impl(code).await
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        Ok(())
+    }
 }
 
 #[component]
@@ -32,7 +46,7 @@ pub fn OauthCallbackPage() -> impl IntoView {
             };
 
             match complete_account_login(code).await {
-                Ok(_) => String::new(), // success — empty string signals redirect
+                Ok(_) => String::new(),
                 Err(e) => format!("Failed to complete login: {e}"),
             }
         },
@@ -44,9 +58,9 @@ pub fn OauthCallbackPage() -> impl IntoView {
                 {move || Suspend::new(async move {
                     let res = result.await;
                     if res.is_empty() {
-                        view! { <Redirect path="/account" /> }
+                        Either::Left(view! { <Redirect path="/account" /> })
                     } else {
-                        view! {
+                        Either::Right(view! {
                             <div class="flex flex-col items-center gap-4 px-8 text-center">
                                 <h1 class="text-xl font-bold text-white">"Login Failed"</h1>
                                 <p class="text-sm text-neutral-400">{res}</p>
@@ -57,7 +71,7 @@ pub fn OauthCallbackPage() -> impl IntoView {
                                     "Back to login"
                                 </a>
                             </div>
-                        }
+                        })
                     }
                 })}
             </Suspense>
